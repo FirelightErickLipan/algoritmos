@@ -128,6 +128,8 @@ Ejecutar la suite completa de pruebas unitarias y de widgets:
 flutter test
 ```
 
+
+
 Las pruebas cubren:
 - Geometría de curvas Bézier y puntos de anclaje perimetrales.
 - Validación de políticas de algoritmos (restricciones de asignación bipartita y aciclicidad de Johnson).
