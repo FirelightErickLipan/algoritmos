@@ -58,6 +58,8 @@ El lienzo se adapta dinámicamente al algoritmo seleccionado a través de contra
 
 ---
 
+
+
 ## Arquitectura del Software
 
 El proyecto implementa los principios de **Clean Architecture**, **SOLID** y programación reactiva con **Riverpod**:
