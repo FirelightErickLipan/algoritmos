@@ -1,0 +1,725 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../algorithms/core/algorithm_registry.dart';
+import '../../algorithms/graph_paths/domain/graph_path_policy.dart';
+import '../../algorithms/graph_paths/providers/graph_path_run_provider.dart';
+import '../../algorithms/northwest/providers/northwest_provider.dart';
+import '../../application/providers/atributos_provider.dart';
+import '../../application/providers/edicion_provider.dart';
+import '../../application/providers/grafo_provider.dart';
+import '../../domain/models/atributo.dart';
+import '../../domain/models/conexion.dart';
+import '../../domain/models/direccion.dart';
+import '../dialogs/connection_duplicate_dialog.dart';
+import '../dialogs/delete_attribute_dialog.dart';
+import '../dialogs/delete_confirmation_dialog.dart';
+import '../text/connection_text.dart';
+import '../text/dialog_text.dart';
+import '../theme/app_theme.dart';
+import 'app_toast.dart';
+import 'edit_panel/connection_edit_section.dart';
+import 'edit_panel/custom_attributes_section.dart';
+import 'edit_panel/edit_panel_footer_actions.dart';
+import 'edit_panel/edit_panel_header.dart';
+import 'edit_panel/node_edit_section.dart';
+
+class EditPanel extends ConsumerStatefulWidget {
+  const EditPanel({super.key});
+
+  @override
+  ConsumerState<EditPanel> createState() => _EditPanelState();
+}
+
+class _EditPanelState extends ConsumerState<EditPanel> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _newAttrController = TextEditingController();
+  final Map<String, TextEditingController> _attrValueControllers = {};
+  final Map<String, TextEditingController> _attrTagNameControllers = {};
+
+  String? _lastSyncedItemId;
+  int _selectedColor = 0xFF7C4DFF;
+  Direccion _selectedDireccion = Direccion.ninguna;
+  String? _selectedOrigenId;
+  String? _selectedDestinoId;
+
+  final FocusNode _keyboardFocusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _keyboardFocusNode.dispose();
+    _nameController.dispose();
+    _newAttrController.dispose();
+    for (final c in _attrValueControllers.values) {
+      c.dispose();
+    }
+    for (final c in _attrTagNameControllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  TextEditingController _getAttrController(String attrId) {
+    if (!_attrValueControllers.containsKey(attrId)) {
+      _attrValueControllers[attrId] = TextEditingController();
+    }
+    return _attrValueControllers[attrId]!;
+  }
+
+  TextEditingController _getAttrTagNameController(
+    String attrId,
+    String currentName,
+  ) {
+    if (!_attrTagNameControllers.containsKey(attrId)) {
+      _attrTagNameControllers[attrId] = TextEditingController(
+        text: currentName,
+      );
+    } else if (_attrTagNameControllers[attrId]!.text != currentName &&
+        !FocusScope.of(context).hasFocus) {
+      _attrTagNameControllers[attrId]!.text = currentName;
+    }
+    return _attrTagNameControllers[attrId]!;
+  }
+
+  void _syncWithCurrentItem() {
+    final edicion = ref.read(estadoEdicionProvider);
+    final grafo = ref.read(grafoProvider);
+    final atributos = ref.read(atributosGlobalesProvider);
+
+    if (edicion.itemSeleccionadoId == null) return;
+
+    for (final attr in atributos) {
+      if (!_attrTagNameControllers.containsKey(attr.id)) {
+        _attrTagNameControllers[attr.id] = TextEditingController(
+          text: attr.nombre,
+        );
+      }
+    }
+
+    if (edicion.esNodo) {
+      final nodo = grafo.nodos[edicion.itemSeleccionadoId];
+      if (nodo != null) {
+        _nameController.text = nodo.nombre ?? '';
+        _selectedColor = nodo.colorValue;
+      }
+    } else {
+      final conn = grafo.conexiones[edicion.itemSeleccionadoId];
+      if (conn != null) {
+        _selectedColor = conn.colorValue;
+        _selectedOrigenId = conn.nodoOrigenId;
+        _selectedDestinoId = conn.nodoDestinoId;
+        _selectedDireccion = conn.direccion;
+
+        _attrValueControllers.clear();
+        for (final av in conn.atributos) {
+          _attrValueControllers[av.atributoId] = TextEditingController(
+            text: av.valor,
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _confirmDeleteAttribute(
+    BuildContext context,
+    Atributo attr,
+  ) async {
+    final grafo = ref.read(grafoProvider);
+    final affectedValues = <String>[];
+    for (final conn in grafo.conexiones.values) {
+      for (final av in conn.atributos) {
+        if (av.atributoId == attr.id && av.valor.trim().isNotEmpty) {
+          affectedValues.add(av.valor.trim());
+        }
+      }
+    }
+
+    final valuesSummary = affectedValues.isEmpty
+        ? '(Ningún valor asignado)'
+        : affectedValues.join(', ');
+
+    final confirmed = await DeleteAttributeDialog.show(
+      context,
+      attr,
+      valuesSummary,
+    );
+
+    if (confirmed == true) {
+      ref.read(atributosGlobalesProvider.notifier).eliminarAtributo(attr.id);
+      ref.read(grafoProvider.notifier).eliminarAtributoDeConexiones(attr.id);
+      if (mounted) {
+        setState(() {
+          _attrValueControllers.remove(attr.id)?.dispose();
+          _attrTagNameControllers.remove(attr.id)?.dispose();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final edicion = ref.watch(estadoEdicionProvider);
+    final atributosGlobales = ref.watch(atributosGlobalesProvider);
+    final palette = NeumorphicPalette.of(context);
+
+    if (edicion.itemSeleccionadoId == null) {
+      _lastSyncedItemId = null;
+      return const SizedBox.shrink();
+    }
+
+    if (_lastSyncedItemId != edicion.itemSeleccionadoId) {
+      _lastSyncedItemId = edicion.itemSeleccionadoId;
+      _syncWithCurrentItem();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _keyboardFocusNode.requestFocus();
+        }
+      });
+    }
+
+    final isNode = edicion.esNodo;
+    final conn = !isNode && edicion.itemSeleccionadoId != null
+        ? ref.watch(grafoProvider).conexiones[edicion.itemSeleccionadoId]
+        : null;
+
+    final origNodeId = conn?.nodoOrigenId;
+    final destNodeId = conn?.nodoDestinoId;
+
+    final origNode = origNodeId != null
+        ? ref.watch(grafoProvider).nodos[origNodeId]
+        : null;
+    final destNode = destNodeId != null
+        ? ref.watch(grafoProvider).nodos[destNodeId]
+        : null;
+
+    final nameA = origNode?.nombre ?? 'Nodo A';
+    final nameB = destNode?.nombre ?? 'Nodo B';
+    final isSelfLoop = origNodeId != null && origNodeId == destNodeId;
+    final activeAlgo = ref.watch(activeAlgorithmProvider);
+    final activePolicy = ref.watch(activePolicyProvider);
+
+    final allowedDirs =
+        activePolicy != null && origNodeId != null && destNodeId != null
+        ? activePolicy.allowedDirections(
+            ref.read(grafoProvider),
+            origNodeId,
+            destNodeId,
+          )
+        : const [Direccion.ninguna, Direccion.unidireccional];
+
+    final List<_ChoiceOption<String>> directionOptions = [];
+
+    if (isSelfLoop) {
+      if (allowedDirs.contains(Direccion.ninguna)) {
+        directionOptions.add(
+          _ChoiceOption<String>(
+            id: 'undirected',
+            label: 'No dirigida',
+            onSelect: () {
+              setState(() {
+                _selectedDireccion = Direccion.ninguna;
+              });
+            },
+          ),
+        );
+      }
+      if (allowedDirs.contains(Direccion.unidireccional)) {
+        directionOptions.add(
+          _ChoiceOption<String>(
+            id: 'directional',
+            label: 'Dirigida (Bucle en $nameA)',
+            onSelect: () {
+              setState(() {
+                _selectedDireccion = Direccion.unidireccional;
+              });
+            },
+          ),
+        );
+      }
+    } else {
+      if (allowedDirs.contains(Direccion.ninguna)) {
+        directionOptions.add(
+          _ChoiceOption<String>(
+            id: 'undirected',
+            label: 'No dirigida',
+            onSelect: () {
+              setState(() {
+                _selectedDireccion = Direccion.ninguna;
+              });
+            },
+          ),
+        );
+      }
+      if (allowedDirs.contains(Direccion.unidireccional)) {
+        directionOptions.add(
+          _ChoiceOption<String>(
+            id: 'directional',
+            label: 'Dirigida ($nameA → $nameB)',
+            onSelect: () {
+              setState(() {
+                _selectedDireccion = Direccion.unidireccional;
+                _selectedOrigenId = origNodeId;
+                _selectedDestinoId = destNodeId;
+              });
+            },
+          ),
+        );
+      }
+    }
+
+    String currentDirectionOptionId =
+        _selectedDireccion == Direccion.unidireccional
+        ? 'directional'
+        : 'undirected';
+
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    final itemTitle = isNode
+        ? DialogText.nodeProperties
+        : ConnectionText.attributesHeader;
+
+    final currentNode = isNode && edicion.itemSeleccionadoId != null
+        ? ref.watch(grafoProvider).nodos[edicion.itemSeleccionadoId]
+        : null;
+    final customNodeControls = currentNode != null
+        ? activeAlgo?.buildNodeEditControls(context, ref, currentNode)
+        : null;
+
+    return Shortcuts(
+      shortcuts: <ShortcutActivator, Intent>{
+        const SingleActivator(LogicalKeyboardKey.enter):
+            const _SaveEditIntent(),
+        const SingleActivator(LogicalKeyboardKey.numpadEnter):
+            const _SaveEditIntent(),
+        const SingleActivator(LogicalKeyboardKey.escape):
+            const _CancelEditIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          _SaveEditIntent: CallbackAction<_SaveEditIntent>(
+            onInvoke: (_) {
+              _saveChanges();
+              return null;
+            },
+          ),
+          _CancelEditIntent: CallbackAction<_CancelEditIntent>(
+            onInvoke: (_) {
+              FocusScope.of(context).unfocus();
+              ref.read(estadoEdicionProvider.notifier).deseleccionar();
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          focusNode: _keyboardFocusNode,
+          autofocus: true,
+          child: KeyboardListener(
+            focusNode: FocusNode(),
+            onKeyEvent: (event) {
+              if (event is KeyDownEvent) {
+                if (event.logicalKey == LogicalKeyboardKey.enter ||
+                    event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                  _saveChanges();
+                } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                  FocusScope.of(context).unfocus();
+                  ref.read(estadoEdicionProvider.notifier).deseleccionar();
+                }
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 12.0,
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 640,
+                  maxHeight: 520,
+                ),
+                child: Material(
+                  elevation: 12,
+                  shadowColor: colorScheme.shadow.withValues(alpha: 0.3),
+                  color: colorScheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.6,
+                        ),
+                        width: 1.0,
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(20.0),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          EditPanelHeader(
+                            title: itemTitle,
+                            onClose: () {
+                              ref
+                                  .read(estadoEdicionProvider.notifier)
+                                  .deseleccionar();
+                            },
+                          ),
+                          Divider(color: colorScheme.outlineVariant),
+                          if (isNode) ...[
+                            NodeEditSection(
+                              nameController: _nameController,
+                              colorScheme: colorScheme,
+                              palette: palette,
+                              selectedColorValue: _selectedColor,
+                              onNameChanged: (_) {
+                                ref
+                                    .read(estadoEdicionProvider.notifier)
+                                    .marcarCambioSinGuardar();
+                              },
+                              onColorSelected: (colorVal) {
+                                setState(() {
+                                  _selectedColor = colorVal;
+                                });
+                                ref
+                                    .read(estadoEdicionProvider.notifier)
+                                    .marcarCambioSinGuardar();
+                              },
+                            ),
+                            if (customNodeControls != null) ...[
+                              const SizedBox(height: 10),
+                              customNodeControls,
+                            ],
+                          ],
+                          if (!isNode) ...[
+                            ConnectionEditSection(
+                              colorScheme: colorScheme,
+                              isSelfLoop: isSelfLoop,
+                              selectedDireccion: _selectedDireccion,
+                              currentDirectionOptionId:
+                                  currentDirectionOptionId,
+                              directionOptions: directionOptions
+                                  .map(
+                                    (opt) => ChoiceChipOption(
+                                      id: opt.id,
+                                      label: opt.label,
+                                      onSelect: opt.onSelect,
+                                    ),
+                                  )
+                                  .toList(),
+                              loopAngle: conn?.loopAngle ?? (-3.14159 / 2),
+                              onLoopAngleChanged: (val) {
+                                if (conn != null) {
+                                  ref
+                                      .read(grafoProvider.notifier)
+                                      .actualizarConexion(
+                                        conn.id,
+                                        loopAngle: val,
+                                      );
+                                  ref
+                                      .read(estadoEdicionProvider.notifier)
+                                      .marcarCambioSinGuardar();
+                                }
+                              },
+                            ),
+                          ],
+                          if (!isNode) ...[
+                            CustomAttributesSection(
+                              atributosGlobales: atributosGlobales,
+                              allowSignedValues:
+                                  activeAlgo?.id ==
+                                      AlgorithmRegistry.kruskalId ||
+                                  (activeAlgo?.id ==
+                                          AlgorithmRegistry.dijkstraId &&
+                                      ref.watch(graphPathRunProvider).mode ==
+                                          GraphPathMode.longestSimple),
+                              colorScheme: colorScheme,
+                              palette: palette,
+                              newAttrController: _newAttrController,
+                              getAttrController: _getAttrController,
+                              getAttrTagNameController:
+                                  _getAttrTagNameController,
+                              onTagRenamed: (attrId, newTag) {
+                                ref
+                                    .read(atributosGlobalesProvider.notifier)
+                                    .renombrarAtributo(attrId, newTag);
+                                ref
+                                    .read(estadoEdicionProvider.notifier)
+                                    .marcarCambioSinGuardar();
+                              },
+                              onValueChanged: () {
+                                ref
+                                    .read(estadoEdicionProvider.notifier)
+                                    .marcarCambioSinGuardar();
+                              },
+                              onDeleteAttribute: (attr) {
+                                _confirmDeleteAttribute(context, attr);
+                              },
+                              onAddAttribute: () {
+                                final name = _newAttrController.text.trim();
+                                if (name.isNotEmpty) {
+                                  ref
+                                      .read(atributosGlobalesProvider.notifier)
+                                      .agregarAtributo(name);
+                                  _newAttrController.clear();
+                                }
+                              },
+                            ),
+                          ],
+                          const SizedBox(height: 20),
+                          EditPanelFooterActions(
+                            onDelete: () => _confirmDeleteItem(context),
+                            onCancel: () {
+                              FocusScope.of(context).unfocus();
+                              ref
+                                  .read(estadoEdicionProvider.notifier)
+                                  .deseleccionar();
+                            },
+                            onSave: _saveChanges,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteItem(BuildContext context) async {
+    final edicion = ref.read(estadoEdicionProvider);
+    final itemId = edicion.itemSeleccionadoId;
+    if (itemId == null) return;
+
+    final grafo = ref.read(grafoProvider);
+    final policy = ref.read(activePolicyProvider);
+    final atributos = ref.read(atributosGlobalesProvider);
+
+    final Map<String, String> attrNames = {
+      for (final a in atributos) a.id: a.nombre,
+    };
+    final Map<String, String> nodeNames = {
+      for (final n in grafo.nodos.values) n.id: n.nombre ?? n.id,
+    };
+
+    if (edicion.esNodo) {
+      final nodo = grafo.nodos[itemId];
+      if (nodo == null) return;
+      final deletion = policy?.canDeleteNode(grafo, nodo.id);
+      if (deletion != null && !deletion.allowed) {
+        AppToast.show(
+          context,
+          deletion.message ?? 'No puedes eliminar este nodo.',
+          icon: Icons.lock_outline_rounded,
+        );
+        return;
+      }
+      final conexiones = grafo.obtenerConexionesDeNodo(nodo.id);
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        useRootNavigator: true,
+        builder: (_) => DeleteConfirmationDialog(
+          isNode: true,
+          nodeName: nodo.nombre ?? nodo.id,
+          connectionsToDelete: conexiones,
+          attributeNames: attrNames,
+          nodeNames: nodeNames,
+        ),
+      );
+
+      if (confirmed != true) return;
+      if (!mounted) return;
+
+      ref.read(grafoProvider.notifier).eliminarNodo(nodo.id);
+      ref.read(estadoEdicionProvider.notifier).deseleccionar();
+    } else {
+      final conn = grafo.conexiones[itemId];
+      if (conn == null) return;
+      final deletion = policy?.canDeleteConnection(grafo, conn.id);
+      if (deletion != null && !deletion.allowed) {
+        AppToast.show(
+          context,
+          deletion.message ?? 'No puedes eliminar esta conexion.',
+          icon: Icons.lock_outline_rounded,
+        );
+        return;
+      }
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        useRootNavigator: true,
+        builder: (_) => DeleteConfirmationDialog(
+          isNode: false,
+          targetConnection: conn,
+          attributeNames: attrNames,
+          nodeNames: nodeNames,
+        ),
+      );
+
+      if (confirmed != true) return;
+      if (!mounted) return;
+
+      ref.read(grafoProvider.notifier).eliminarConexion(conn.id);
+      ref.read(estadoEdicionProvider.notifier).deseleccionar();
+    }
+  }
+
+  void _saveChanges() async {
+    FocusScope.of(context).unfocus();
+    final edicion = ref.read(estadoEdicionProvider);
+    final itemId = edicion.itemSeleccionadoId;
+    if (itemId == null) return;
+
+    if (edicion.esNodo) {
+      ref
+          .read(grafoProvider.notifier)
+          .actualizarNodo(
+            itemId,
+            nombre: _nameController.text.trim(),
+            colorValue: _selectedColor,
+          );
+      ref.read(estadoEdicionProvider.notifier).desmarcarCambiosSinGuardar();
+      ref.read(estadoEdicionProvider.notifier).deseleccionar();
+    } else {
+      final grafo = ref.read(grafoProvider);
+      final conn = grafo.conexiones[itemId];
+      if (conn == null) return;
+      final isNorthwest =
+          ref.read(activeAlgorithmProvider)?.id ==
+          AlgorithmRegistry.northwestId;
+      final activeId = ref.read(activeAlgorithmProvider)?.id;
+      final isPathMode =
+          activeId == AlgorithmRegistry.dijkstraId ||
+          activeId == AlgorithmRegistry.kruskalId;
+
+      final targetOrigenId = isNorthwest
+          ? conn.nodoOrigenId
+          : (_selectedOrigenId ?? conn.nodoOrigenId);
+      final targetDestinoId = isNorthwest
+          ? conn.nodoDestinoId
+          : (_selectedDestinoId ?? conn.nodoDestinoId);
+
+      if (isPathMode) {
+        final validation =
+            GraphPathPolicy(kruskal: activeId == AlgorithmRegistry.kruskalId)
+                .canUpdateConnection(
+                  grafo,
+                  conn,
+                  origenId: targetOrigenId,
+                  destinoId: targetDestinoId,
+                  direccion: _selectedDireccion,
+                  weight: _attrValueControllers['attr_valor']?.text ?? '',
+                  allowNegativeForLongestSimple:
+                      activeId == AlgorithmRegistry.dijkstraId &&
+                      ref.read(graphPathRunProvider).mode ==
+                          GraphPathMode.longestSimple,
+                );
+        if (!validation.allowed) {
+          AppToast.show(
+            context,
+            validation.message ?? 'Arista no válida.',
+            icon: Icons.warning_amber_rounded,
+          );
+          return;
+        }
+      }
+
+      final existingDuplicate = grafo.conexiones.values.firstWhere(
+        (other) =>
+            other.id != itemId &&
+            other.nodoOrigenId == targetOrigenId &&
+            other.nodoDestinoId == targetDestinoId &&
+            (other.direccion == _selectedDireccion ||
+                _selectedDireccion == Direccion.bidireccional),
+        orElse: () => const Conexion(
+          id: '',
+          nodoOrigenId: '',
+          nodoDestinoId: '',
+          colorValue: 0,
+        ),
+      );
+
+      if (!isPathMode && existingDuplicate.id.isNotEmpty) {
+        final origNode = grafo.nodos[targetOrigenId];
+        final destNode = grafo.nodos[targetDestinoId];
+        final origName = origNode?.nombre ?? targetOrigenId;
+        final destName = destNode?.nombre ?? targetDestinoId;
+
+        final shouldReplace = await ConnectionDuplicateDialog.show(
+          context: context,
+          origName: origName,
+          destName: destName,
+        );
+
+        if (shouldReplace != true) {
+          return;
+        }
+
+        ref.read(grafoProvider.notifier).eliminarConexion(existingDuplicate.id);
+      }
+
+      final atributosGlobales = ref.read(atributosGlobalesProvider);
+      final attrValues = <AtributoValor>[];
+
+      for (final a in atributosGlobales) {
+        String val = _attrValueControllers[a.id]?.text.trim() ?? '';
+        if (val.isNotEmpty) {
+          if (!isPathMode) {
+            final parsed = double.tryParse(val);
+            if (parsed == null || (!isNorthwest && parsed <= 0)) {
+              val = '1';
+            }
+          }
+          attrValues.add(AtributoValor(atributoId: a.id, valor: val));
+        }
+      }
+
+      ref
+          .read(grafoProvider.notifier)
+          .actualizarConexion(
+            itemId,
+            nodoOrigenId: targetOrigenId,
+            nodoDestinoId: targetDestinoId,
+            colorValue: _selectedColor,
+            direccion: isNorthwest
+                ? Direccion.unidireccional
+                : _selectedDireccion,
+            atributos: attrValues,
+          );
+
+      if (isNorthwest) {
+        ref.read(northwestNotifierProvider.notifier).setActive(false);
+      }
+
+      ref.read(estadoEdicionProvider.notifier).desmarcarCambiosSinGuardar();
+      ref.read(estadoEdicionProvider.notifier).deseleccionar();
+    }
+  }
+}
+
+class _ChoiceOption<T> {
+  final T id;
+  final String label;
+  final VoidCallback onSelect;
+
+  _ChoiceOption({
+    required this.id,
+    required this.label,
+    required this.onSelect,
+  });
+}
+
+class _SaveEditIntent extends Intent {
+  const _SaveEditIntent();
+}
+
+class _CancelEditIntent extends Intent {
+  const _CancelEditIntent();
+}

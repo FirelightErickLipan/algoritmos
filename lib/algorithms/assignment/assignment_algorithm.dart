@@ -1,0 +1,292 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../application/providers/config_provider.dart';
+import '../../application/providers/grafo_provider.dart';
+import '../../domain/models/conexion.dart';
+import '../../domain/models/modo_tipo_nodo.dart';
+import '../../domain/models/nodo.dart';
+import '../../ui/dialogs/connection_value_input_dialog.dart';
+import '../../core/utils/app_logger.dart';
+import '../core/graph_algorithm.dart';
+import '../core/models/algorithm_step.dart';
+import 'domain/models/assignment_models.dart';
+import 'domain/policy/assignment_graph_policy.dart';
+import 'providers/assignment_provider.dart';
+import 'ui/assignment_algorithm_card.dart';
+import 'ui/assignment_canvas_controls.dart';
+import 'ui/assignment_graph_matrix_screen.dart';
+import 'ui/assignment_launch_button.dart';
+
+/// Pluggable GraphAlgorithm implementation for Assignment / Hungarian method.
+class AssignmentAlgorithm implements GraphAlgorithm {
+  static const String algorithmId = 'assignment';
+
+  const AssignmentAlgorithm();
+
+  @override
+  String get id => algorithmId;
+
+  @override
+  String get name => 'Asignación';
+
+  @override
+  String get shortName => 'Asignación';
+
+  @override
+  String get description =>
+      'Problema de asignación y transporte bipartito resuelto con el Algoritmo Húngaro.';
+
+  @override
+  IconData get icon => Icons.assignment_turned_in_rounded;
+
+  @override
+  Color get themeColor => const Color(0xFF7C4DFF);
+
+  @override
+  String get userGuideMarkdown => r'''
+# Guía de Uso: Algoritmo de Asignación (Método Húngaro)
+
+El **Algoritmo de Asignación** resuelve problemas de emparejamiento óptimo entre dos conjuntos de elementos (Recursos $\\rightarrow$ Tareas, Orígenes $\\rightarrow$ Destinos) minimizando el costo total o maximizando la efectividad.
+
+---
+
+## 1. Reglas de Topología y Dibujo
+- **Grafo Bipartito:** Los nodos se dividen en dos roles: **Orígenes** (color violeta) y **Destinos** (color turquesa/verde).
+- **Flujo Unidireccional:** Las conexiones deben ir estrictamente desde un nodo Origen hacia un nodo Destino.
+- **Sin Ciclos ni Auto-bucles:** No se permiten bucles en un mismo nodo ni conexiones entre nodos del mismo rol.
+
+---
+
+## 2. Captura de Costos y Matriz Bipartita
+- **Costos de Conexión:** Cada arista posee un valor numérico correspondiente al costo $C_{ij}$ de asignar el origen $i$ al destino $j$.
+- **Pantalla Matricial:** Presiona el botón de **Matriz** para alternar entre el lienzo y la vista de matriz interactiva.
+- **Balanceo Automático:** Si el número de orígenes y destinos no coincide, el solucionador añade automáticamente variables ficticias con costo cero para balancear la matriz.
+
+---
+
+## 3. Visualización de Resultados
+- Al activar el cálculo, las asignaciones óptimas seleccionadas por el Algoritmo Húngaro se resaltarán dinámicamente con un brillo fluorescente en el lienzo.
+- La tarjeta flotante mostrará la suma total del costo mínimo y el desglose de cada par asignado.
+''';
+
+  @override
+  GraphAlgorithmPolicy get policy => const AssignmentGraphPolicy();
+
+  @override
+  Widget buildLaunchButton(BuildContext context, WidgetRef ref) {
+    return const AssignmentLaunchButton();
+  }
+
+  @override
+  Widget? buildCanvasControls(BuildContext context, WidgetRef ref) {
+    return const AssignmentCanvasControls();
+  }
+
+  @override
+  Map<String, dynamic>? newNodeParams(WidgetRef ref) {
+    final modo = ref.read(configProvider).modoTipoNodo;
+    if (modo == ModoTipoNodo.detectado) {
+      return null;
+    }
+    final role = ref.read(assignmentActiveRoleProvider);
+    return {'role': role, 'rol': role};
+  }
+
+  @override
+  Widget? buildEmptyState(BuildContext context, WidgetRef ref) => null;
+
+  @override
+  Widget? buildAlgorithmCard(BuildContext context, WidgetRef ref) {
+    final validation = ref.watch(transportationValidationProvider);
+    final state = ref.watch(transportationNotifierProvider);
+
+    if (state.isActive && validation.isValid) {
+      return const AssignmentAlgorithmCard();
+    }
+    return null;
+  }
+
+  @override
+  Widget? buildNodeEditControls(
+    BuildContext context,
+    WidgetRef ref,
+    Nodo nodo,
+  ) {
+    final grafo = ref.watch(grafoProvider);
+    final outD = grafo.conexiones.values
+        .where((c) => c.nodoOrigenId == nodo.id)
+        .length;
+    final inD = grafo.conexiones.values
+        .where((c) => c.nodoDestinoId == nodo.id)
+        .length;
+
+    String roleTitle;
+    String roleDesc;
+    Color roleColor;
+    IconData roleIcon;
+
+    final isExplicitOrigin =
+        nodo.rol == AssignmentRoles.origin || nodo.rol == 'origen';
+    final isExplicitDest =
+        nodo.rol == AssignmentRoles.destination || nodo.rol == 'destino';
+
+    if (isExplicitOrigin) {
+      roleTitle = 'Origen (declarado)';
+      roleDesc = 'Este nodo está configurado explícitamente como Origen.';
+      roleColor = const Color(AssignmentRoles.originColor);
+      roleIcon = Icons.outbox_rounded;
+    } else if (isExplicitDest) {
+      roleTitle = 'Destino (declarado)';
+      roleDesc = 'Este nodo está configurado explícitamente como Destino.';
+      roleColor = const Color(AssignmentRoles.destinationColor);
+      roleIcon = Icons.move_to_inbox_rounded;
+    } else if (inD == 0 && outD > 0) {
+      roleTitle = 'Origen (detectado)';
+      roleDesc =
+          'Este nodo emite $outD ${outD == 1 ? "conexión" : "conexiones"}.';
+      roleColor = const Color(AssignmentRoles.originColor);
+      roleIcon = Icons.outbox_rounded;
+    } else if (outD == 0 && inD > 0) {
+      roleTitle = 'Destino (detectado)';
+      roleDesc =
+          'Este nodo recibe $inD ${inD == 1 ? "conexión" : "conexiones"}.';
+      roleColor = const Color(AssignmentRoles.destinationColor);
+      roleIcon = Icons.move_to_inbox_rounded;
+    } else if (inD == 0 && outD == 0) {
+      roleTitle = 'Sin conectar';
+      roleDesc = 'El rol se detectará automáticamente al conectar este nodo.';
+      roleColor = Colors.grey;
+      roleIcon = Icons.help_outline_rounded;
+    } else {
+      roleTitle = 'Intermedio (Inválido)';
+      roleDesc = 'No puede recibir y emitir conexiones simultáneamente.';
+      roleColor = Colors.redAccent;
+      roleIcon = Icons.error_outline_rounded;
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: roleColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: roleColor.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Icon(roleIcon, color: roleColor, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  roleTitle,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: roleColor,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  roleDesc,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  bool get supportsMatrix => true;
+
+  @override
+  String? get matrixUnavailableReason => null;
+
+  @override
+  Widget? buildMatrixScreen(BuildContext context, WidgetRef ref) {
+    AppLogger.i(
+      'AssignmentAlgorithm',
+      'Abriendo la pantalla de matriz editable de Asignación (AssignmentGraphMatrixScreen)',
+    );
+    return const AssignmentGraphMatrixScreen();
+  }
+
+  @override
+  bool get supportsStepByStep => true;
+
+  @override
+  String? get stepByStepUnavailableReason => null;
+
+  @override
+  Widget? buildStepByStepScreen(BuildContext context, WidgetRef ref) => null;
+
+  @override
+  List<AlgorithmStep> getStepByStepList(WidgetRef ref) {
+    final result = ref.read(transportationResultProvider);
+    if (result == null) return const [];
+
+    final steps = <AlgorithmStep>[];
+    for (final step in result.steps) {
+      List<List<String>>? matrixSnapshot;
+      if (step.currentAllocations != null) {
+        matrixSnapshot = step.currentAllocations!
+            .map((row) => row.map((v) => v.toStringAsFixed(1)).toList())
+            .toList();
+      }
+      steps.add(
+        AlgorithmStep(
+          stepNumber: step.stepNumber,
+          title: step.title,
+          description: step.description,
+          formulaLatex: step.formulaLatex,
+          matrixSnapshot: matrixSnapshot,
+          metrics: {
+            'Método': result.method.displayName,
+            'Valor Z': result.totalCost.toStringAsFixed(2),
+          },
+        ),
+      );
+    }
+    return steps;
+  }
+
+  @override
+  Future<bool?> showConnectionValueInputDialog(
+    BuildContext context,
+    WidgetRef ref,
+    Conexion conexion,
+  ) {
+    return ConnectionValueInputDialog.show(
+      context: context,
+      ref: ref,
+      conexion: conexion,
+      title: 'Costo de Conexión (Asignación)',
+      valueLabel: 'Costo de Asignación',
+    );
+  }
+
+  @override
+  Future<void> onConnectionCreated(
+    BuildContext context,
+    WidgetRef ref,
+    Conexion conexion,
+  ) {
+    // Opens the single-connection value input popup (pre-filled with default),
+    // allowing the user to set the cost immediately after creating the connection.
+    showConnectionValueInputDialog(context, ref, conexion);
+    return Future.value();
+  }
+
+  @override
+  Future<void> onNodeCreated(BuildContext context, WidgetRef ref, Nodo nodo) =>
+      Future.value();
+}

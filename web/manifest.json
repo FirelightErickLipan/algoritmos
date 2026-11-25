@@ -1,0 +1,41 @@
+{
+    "name": "SleepNode",
+    "short_name": "SleepNode",
+    "start_url": "index.html",
+    "scope": ".",
+    "display": "standalone",
+    "display_override": [
+        "standalone",
+        "fullscreen",
+        "minimal-ui"
+    ],
+    "background_color": "#141218",
+    "theme_color": "#FFFFFF",
+    "description": "Aplicación interactiva para edición, modelado y resolución de algoritmos de grafos.",
+    "orientation": "any",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

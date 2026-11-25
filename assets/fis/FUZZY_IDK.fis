@@ -1,0 +1,73 @@
+[System]
+Name='FUZZY IDK'
+Type='mamdani'
+Version=2.0
+NumInputs=3
+NumOutputs=1
+NumRules=27
+AndMethod='min'
+OrMethod='max'
+ImpMethod='min'
+AggMethod='max'
+DefuzzMethod='centroid'
+
+[Input1]
+Name='interes'
+Range=[0 10]
+NumMFs=3
+MF1='Malo':'gaussmf',[3.175 2.01]
+MF2='Regular':'gaussmf',[1.52 5.519]
+MF3='Bueno':'gaussmf',[1.92 9.29]
+
+[Input2]
+Name='calidad_docente'
+Range=[0 100]
+NumMFs=3
+MF1='Mala':'trapmf',[-34.17 -7.503 19.07 35.45]
+MF2='Regular':'trapmf',[15.83 42.5 57.5 84.17]
+MF3='Bueno':'trapmf',[54.6 75.63 94 130]
+
+[Input3]
+Name='infrastructura'
+Range=[0 100]
+NumMFs=3
+MF1='mala':'trapmf',[-37.6 -4.3 28.3 43.6075949367089]
+MF2='regular':'trapmf',[30.2 45.8 64.3670886075949 87.5]
+MF3='bueno':'trapmf',[44.0906329113924 81.3906329113924 90.2506329113924 123.850632911392]
+
+[Output1]
+Name='rendimientoacademico'
+Range=[0 100]
+NumMFs=3
+MF1='pesimo':'gaussmf',[22.91 9.006]
+MF2='Regular':'gaussmf',[12.47 53.35]
+MF3='excelente':'gaussmf',[25.28 95.24]
+
+[Rules]
+1 1 1, 1 (1) : 1
+1 1 3, 1 (1) : 1
+1 1 2, 1 (1) : 1
+1 2 1, 1 (1) : 1
+1 2 2, 1 (1) : 1
+1 3 2, 1 (1) : 1
+1 3 3, 1 (1) : 1
+1 2 3, 1 (1) : 1
+1 3 1, 1 (1) : 1
+2 1 1, 2 (1) : 1
+2 1 2, 2 (1) : 1
+2 1 3, 2 (1) : 1
+2 2 1, 2 (1) : 1
+2 2 2, 2 (1) : 1
+2 2 3, 2 (1) : 1
+2 3 1, 2 (1) : 1
+2 3 2, 2 (1) : 1
+2 3 3, 2 (1) : 1
+3 1 1, 2 (1) : 1
+3 1 2, 2 (1) : 1
+3 1 3, 2 (1) : 1
+3 2 1, 2 (1) : 1
+3 2 2, 2 (1) : 1
+3 2 3, 2 (1) : 1
+3 3 1, 3 (1) : 1
+3 3 2, 3 (1) : 1
+3 3 3, 3 (1) : 1

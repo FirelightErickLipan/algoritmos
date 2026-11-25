@@ -1,0 +1,56 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Flutter Web Wasm (Debug)",
+            "type": "dart",
+            "request": "launch",
+            "deviceId": "chrome",
+            "flutterMode": "debug",
+            "toolArgs": [
+                "--wasm"
+            ]
+        },
+        {
+            "name": "Flutter Web Wasm (Profile)",
+            "type": "dart",
+            "request": "launch",
+            "deviceId": "chrome",
+            "flutterMode": "profile",
+            "toolArgs": [
+                "--wasm"
+            ]
+        },
+        {
+            "name": "Flutter Web Wasm (Release)",
+            "type": "dart",
+            "request": "launch",
+            "deviceId": "chrome",
+            "flutterMode": "release",
+            "toolArgs": [
+                "--wasm"
+            ]
+        },
+        {
+            "name": "Flutter Web (Debug)",
+            "type": "dart",
+            "request": "launch",
+            "deviceId": "chrome",
+            "flutterMode": "debug"
+        },
+        {
+            "name": "Flutter Web (Profile)",
+            "type": "dart",
+            "request": "launch",
+            "deviceId": "chrome",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "Flutter Web (Release)",
+            "type": "dart",
+            "request": "launch",
+            "deviceId": "chrome",
+            "flutterMode": "release"
+        }
+    ]
+}
